@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Love Heart</title>
+
+<!-- ============ CSS ============ -->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; cursor: pointer; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<!-- ============ JavaScript ============ -->
+<script>
+// ---------- الإعدادات ----------
+const RATE  = 0.55;   // كم كلمة بتظهر بكل فريم
+const FADE  = 34;     // عدد فريمات التلاشي
+const DRIFT = 10;     // حركة صغيرة لفوق عند الظهور
+const REDS  = [[255,72,60],[240,58,50],[255,98,82],[225,50,46]];
+const WHITE_LOVE = [236,222,255];   // لون "I love you"
+const SHINE      = [255,232,226];   // لون اللمعة
+const FAMILY = '"Segoe UI","Noto Sans","Helvetica Neue",Arial,sans-serif';
+
+const PHRASES = [
+  "I love you","Je t'aime","Te amo","Ich liebe dich","Ti amo","Eu te amo","Я тебя люблю",
+  "Я тебе кохаю","Обичам те","Волим те","Volim te","Ljubim te","Ľúbim ťa","Kocham cię",
+  "Miluji tě","Szeretlek","Te iubesc","Mahal kita","Aku cinta kamu","Anh yêu em","愛してる",
+  "我爱你","사랑해","أحبك","دوستت دارم","میں تم سے پیار کرتا ہوں","אני אוהב אותך",
+  "Seni seviyorum","मैं तुमसे प्यार करता हूँ","म तिमीलाई माया गर्छु","আমি তোমাকে ভালোবাসি",
+  "நான் உன்னை காதலிக்கிறேன்","నేను నిన్ను ప్రేమిస్తున్నాను","ನಾನು ನಿನ್ನನ್ನು ಪ್ರೀತಿಸುತ್ತೇನೆ",
+  "ഞാൻ നിന്നെ സ്നേഹിക്കുന്നു","ฉันรักเธอ","ខ្ញុំស្រលាញ់អ្នក","ကျွန်တော် မင်းကို ချစ်တယ်",
+  "მე შენ მიყვარხარ","Σ' αγαπώ","Ég elska þig","Jeg elsker deg","Jag älskar dig",
+  "Minä rakastan sinua","Ek is lief vir jou","Ik hou van jou","Të dua","Te quiero","T'estimo",
+  "Mo nífẹ̀ rẹ","Nakupenda","Ngiyakuthanda","Waan ku jeclahay","Ndinokuda","Maite zaitut",
+  "Ma armastan sind","Mīlu tevi","Aš tave myliu","Dw i'n dy garu di","Tá grá agam duit",
+  "Men seni sevaman","Мен сені жақсы көремін","Би чамд хайртай","Səni sevirəm","Quérote",
+  "Hụrụ m gị n'anya","Mwen renmen w","Aloha au iā 'oe","Ke a go rata",
+  "ਮੈਂ ਤੈਨੂੰ ਪਿਆਰ ਕਰਦਾ ਹਾਂ","હું તને પ્રેમ કરું છું","මම ඔබට ආදරෙයි","ຂ້ອຍຮັກເຈົ້າ",
+  "Inħobbok","Ech hunn dech gär","Mi amas vin","Ana behebak","Ja te volim"
+].slice(0, 75);
+
+// ---------- أدوات ----------
+const cv  = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const lerp = (a, b, t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+const rgb  = c => `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+const rnd  = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+
+let W, H, SC, CX, CY, POLY, words, idx, acc, frame, raf;
+
+// ---------- شكل القلب ----------
+function heartPt(t, k = 1) {
+  const x = 16 * Math.sin(t) ** 3;
+  const y = 13*Math.cos(t) - 5*Math.cos(2*t) - 2*Math.cos(3*t) - Math.cos(4*t);
+  return [CX + x * SC * k, CY - y * SC * k];
+}
+function inside(px, py) {
+  let ok = false;
+  for (let i = 0, j = POLY.length - 1; i < POLY.length; j = i++) {
+    const [xi, yi] = POLY[i], [xj, yj] = POLY[j];
+    if ((yi > py) !== (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) ok = !ok;
+  }
+  return ok;
+}
+
+// ---------- توزيع الكلمات داخل القلب ----------
+function buildLayout() {
+  const rects = [], out = [];
+  let cycle = [];
+  const nextPhrase = () => {
+    if (!cycle.length) cycle = PHRASES.slice().sort(() => Math.random() - 0.5);
+    return cycle.pop();
+  };
+  const fits = (x, y, w, h) => {
+    const x0 = x - w/2 - 2, y0 = y - h/2 - 1, x1 = x + w/2 + 2, y1 = y + h/2 + 1;
+    if (!inside(x0,y0) || !inside(x1,y0) || !inside(x0,y1) || !inside(x1,y1)) return false;
+    for (const r of rects) if (x0 < r[2] && x1 > r[0] && y0 < r[3] && y1 > r[1]) return false;
+    rects.push([x0, y0, x1, y1]);
+    return true;
+  };
+  const tryPlace = (x, y, lo, hi) => {
+    const text = nextPhrase(), size = rnd(lo, hi);
+    for (const s of [size, Math.max(5, size - 2)]) {
+      ctx.font = `bold ${s}px ${FAMILY}`;
+      if (fits(x, y, ctx.measureText(text).width, s * 1.25)) {
+        const white = text === "I love you";
+        return { x, y, text, size: s, color: white ? WHITE_LOVE : pick(REDS), t0: -1 };
+      }
+    }
+    return null;
+  };
+
+  const u = SC / 21;   // مقياس الخط حسب حجم الشاشة
+  // حلقات من الخارج للداخل، تبدأ من أعلى القلب مع عقارب الساعة
+  for (let k = 0.95; k > 0.07; k -= 0.05) {
+    for (let i = 0; i < 420; i++) {
+      const [x, y] = heartPt(2 * Math.PI * i / 420, k);
+      const w = tryPlace(x, y, Math.round(8*u), Math.round(12*u));
+      if (w) out.push(w);
+    }
+  }
+  // سد الفراغات الصغيرة
+  const gaps = [];
+  for (let y = 0; y < H; y += 9) for (let x = 0; x < W; x += 9) if (inside(x, y)) gaps.push([x, y]);
+  gaps.sort(() => Math.random() - 0.5);
+  for (const [x, y] of gaps) {
+    const w = tryPlace(x, y, Math.max(5, Math.round(6*u)), Math.max(6, Math.round(8*u)));
+    if (w) out.push(w);
+  }
+  // "I love you" بالنص
+  ctx.font = `bold ${Math.round(13*u)}px ${FAMILY}`;
+  out.push({ x: CX, y: CY + 10*u, text: "I love you", size: Math.round(13*u), color: WHITE_LOVE, t0: -1 });
+  return out;
+}
+
+// ---------- الرسم والحركة ----------
+function draw() {
+  frame++;
+  ctx.clearRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  acc += RATE;
+  while (acc >= 1 && idx < words.length) { acc--; words[idx++].t0 = frame; }
+
+  const done = idx >= words.length && frame - words[words.length - 1].t0 >= FADE;
+  const pos  = done ? ((frame - words[words.length - 1].t0 - FADE) * 7 * (SC / 21)) % (W + 500) - 250 : 0;
+
+  for (let i = 0; i < idx; i++) {
+    const w = words[i];
+    const a = Math.min(1, (frame - w.t0) / FADE);
+    const e = 1 - Math.pow(1 - a, 3);           // easing
+    let c = w.color;
+    if (done) c = lerp(c, SHINE, Math.max(0, 1 - Math.abs(w.x - pos) / (110 * SC / 21)) * 0.85);
+    ctx.globalAlpha = e;
+    ctx.fillStyle = rgb(c);
+    ctx.font = `bold ${w.size}px ${FAMILY}`;
+    ctx.fillText(w.text, w.x, w.y + (1 - e) * DRIFT);
+  }
+  ctx.globalAlpha = 1;
+  raf = requestAnimationFrame(draw);
+}
+
+function start() {
+  cancelAnimationFrame(raf);
+  const dpr = window.devicePixelRatio || 1;
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  SC = Math.min(W * 0.92 / 32, H * 0.9 / 29);
+  CX = W / 2;
+  CY = H / 2 - 2.5 * SC;
+  POLY = Array.from({ length: 600 }, (_, i) => heartPt(2 * Math.PI * i / 600));
+
+  words = buildLayout();
+  idx = 0; acc = 0; frame = 0;
+  raf = requestAnimationFrame(draw);
+}
+
+addEventListener("resize", start);
+cv.addEventListener("click", start);   // اضغط لإعادة التشغيل
+start();
+</script>
+</body>
+</html>
